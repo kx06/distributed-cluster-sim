@@ -1,0 +1,29 @@
+# Dockerfile.api
+
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Install dependencies (gcc/python3-dev needed for some pip packages)
+# Removed 'tree' as it's not needed for runtime, keep it if you debug builds often
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  gcc \
+  python3-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+# Consider adding --no-cache-dir to reduce layer size if needed later
+RUN pip install --upgrade pip && \
+  pip install -r requirements.txt
+
+# Copy ALL project files
+COPY . .
+
+# Optional: Verify structure during build time (instead of CMD)
+# RUN ls -la /app
+# RUN ls -la /app/api_server
+# RUN python -c "from api_server.main import app; print('API Server import successful!')"
+# RUN python -c "import streamlit; print('Streamlit import successful!')" # Verify streamlit
+
+# Default command for the API server
+CMD ["python", "-m", "uvicorn", "api_server.main:app", "--host", "0.0.0.0", "--port", "8000"]

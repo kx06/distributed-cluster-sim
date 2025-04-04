@@ -1,0 +1,74 @@
+# docker-compose.yml
+version: "3.8"
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest # Using latest for simplicity, pin version if needed
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:latest # Using latest for simplicity, pin version if needed
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      # Expose 9092 for internal communication within Docker
+      # Expose 29092 for external communication from your host machine if needed by clients outside Docker
+      - "29092:29092"
+      # - "9092:9092" # Usually not needed to expose 9092 to host if only containers communicate
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      # Listeners: PLAINTEXT for inter-broker and within-Docker communication, EXTERNAL for host access
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0 # Optional: Speed up consumer group joining
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true" # Optional: For easier testing
+
+  api-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: cluster_api_server
+    # Command is inherited from Dockerfile.api CMD
+    ports:
+      - "8000:8000" # Expose API port 8000 to the host
+    environment:
+      # Point to Kafka using the internal listener
+      KAFKA_BROKER: kafka:9092
+      PYTHONPATH: /app
+      PYTHONUNBUFFERED: 1 # For better logging in Docker
+    working_dir: /app
+    depends_on:
+      - kafka # Ensure kafka is started before api-server
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.api # REUSE the same Dockerfile/image build
+    container_name: cluster_frontend_streamlit
+    command: > # OVERRIDE the default CMD from Dockerfile.api to run Streamlit
+      sh -c "streamlit run app.py --server.port 8501 --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false"
+    ports:
+      - "8501:8501" # Expose Streamlit default port 8501 to the host
+    environment:
+      - PYTHONUNBUFFERED=1
+      # CRITICAL: Tell Streamlit where to find the API service within the Docker network
+      # 'api-server' is the service name defined above, Docker networking resolves it.
+      - API_BASE_URL=http://api-server:8000
+      - STREAMLIT_SERVER_PORT=8501 # Explicitly set port environment variable
+    working_dir: /app # Set working directory for consistency
+    depends_on:
+      - api-server # Wait for the 'api-server' service to start before starting 'frontend'
+
+# Optional: Define a default network if needed, otherwise Docker Compose creates one
+# networks:
+#   default:
+#     driver: bridge
